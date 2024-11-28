@@ -317,6 +317,8 @@ thread_yield (void)
   old_level = intr_disable ();
   if (cur != idle_thread) 
     list_insert_ordered (&ready_list, &cur->elem, less_by_priority, NULL);
+  printf("Yield: thread %s at tick %lld.\n", cur->name, 
+timer_ticks());
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -590,3 +592,56 @@ allocate_tid (void)
 /** Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
+
+
+/* Replace the timer_sleep() in timer.c
+Set the wake time, status of the cur_thread,
+and make it fall asleep. zzw231113
+*/
+
+void thread_sleep (int64_t ticks) {
+  if (ticks <= 0) return;
+  struct thread *cur=thread_current () ;
+
+  enum intr_level old_level=intr_disable();
+  // critical section
+  if (cur != idle_thread) {
+  cur->status=THREAD_SLEEP;
+  cur->wake_time=timer_ticks()+ticks;
+  schedule() ;
+  }
+  // critical section end
+  intr_set_level(old_level);
+}
+
+
+/* Check all threads, if a sleep thread can wake up, then wake it up and put it into ready list . zzw231113
+
+*/
+void check_and_wakeup_sleep_thread(void) {
+  struct list_elem *e = list_begin(&all_list); // list for all threads
+  int64_t cur_ticks = timer_ticks();
+
+  while (e != list_end(&all_list)) {
+    struct thread *t = list_entry(e, struct thread, allelem);
+    enum intr_level old_level = intr_disable();
+
+    if (t->status == THREAD_SLEEP && cur_ticks >= t->wake_time) {
+      // 唤醒线程
+      t->status = THREAD_READY;
+      list_insert_ordered(&ready_list, &t->elem, less_by_priority, NULL); // 按优先级插入
+      // list_push_back(&ready_list, &t->elem); // 将线程插入到ready_list的末尾
+
+      // 检查优先级并触发抢占
+      struct thread *cur_thread = thread_current();
+      if (cur_thread != idle_thread && t->priority > cur_thread->priority) {
+        // 如果唤醒的线程优先级更高，触发抢占
+        schedule();
+      }
+
+      printf("Wake up thread %s at tick %lld.\n", t->name, cur_ticks); // 打印信息
+    }
+    e = list_next(e);
+    intr_set_level(old_level);
+  }
+}
